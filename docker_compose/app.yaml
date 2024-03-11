@@ -1,0 +1,84 @@
+version: '3.9'
+
+services:
+  postgresdb:
+    image: postgres:15
+    container_name: postgresdb
+    env_file:
+      - ../.env_prod
+    ports:
+      - '5433:5432'
+    volumes:
+      - dbdata:/data/db
+    networks:
+      - backend
+
+  redis_users:
+    image: redis:7
+    container_name: redis_users
+    ports:
+      - '6380:6379'
+    volumes:
+      - dbdata:/data/cache
+    networks:
+      - backend
+
+  users-mcr:
+    build: ..
+    container_name: users-mcr
+    env_file:
+      - ../.env_prod
+    # command: sh -c "gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind=0.0.0.0:8000"
+    command: sh -c "alembic upgrade head && gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind=0.0.0.0:8001"
+    ports:
+      - '8001:8001'
+    volumes:
+      - ..:/users_backend
+    networks:
+      - backend
+    depends_on:
+      - postgresdb
+      - redis_users
+  
+  celery:
+    build: ..
+    container_name: celery_users
+    command: sh -c "celery --app=app.tasks.celery_app:app_celery worker -l INFO"
+    env_file:
+      - ../.env_prod
+    depends_on:
+      - redis_users
+    networks:
+      - backend
+  
+  celery_beat:
+    image: celery_beat_users
+    build: ..
+    container_name: celery_beat_users
+    command: sh -c "celery --app=app.tasks.celery_app:app_celery worker -l INFO -B"
+    env_file:
+      - ../.env_prod
+    depends_on:
+      - redis_users
+    networks:
+      - backend
+
+  flower:
+    build: ..
+    container_name: flower_users
+    command: sh -c "celery --app=app.tasks.celery_app:app_celery flower"
+    env_file:
+      - ../.env_prod
+    depends_on:
+      - redis_users
+    ports:
+      - 5555:5555
+    networks:
+      - backend
+
+volumes:
+  dbdata:
+
+networks:
+  backend:
+    driver: bridge
